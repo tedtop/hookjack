@@ -25,17 +25,13 @@ export function WordDetailsPanel() {
   };
 
   const handleMute = () => {
-    if (!audioBuffer || !replacement) {
+    if (!replacement) {
       addReplacement({
         word: word.word,
         wordIndex: selectedWordIndex,
         startTime: word.start,
         endTime: word.end,
         type: 'muted',
-        originalBuffer: audioBuffer!.slice(
-          Math.floor(word.start * audioBuffer.sampleRate),
-          Math.floor(word.end * audioBuffer.sampleRate)
-        ),
       });
     } else if (replacement.type === 'muted') {
       removeReplacement(replacements.indexOf(replacement));

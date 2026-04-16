@@ -4,7 +4,7 @@ export class AudioEngine {
   private audioContext: AudioContext;
   private gainNode: GainNode;
   private analyserNode: AnalyserNode;
-  private source: AudioBufferAudioNode | null = null;
+  private source: AudioBufferSourceNode | null = null;
   private startTime: number = 0;
   private pausedTime: number = 0;
   private animationId: number | null = null;
