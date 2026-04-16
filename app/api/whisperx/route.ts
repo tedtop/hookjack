@@ -1,7 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
 
 const REPLICATE_API_KEY = process.env.REPLICATE_API_KEY;
 
@@ -14,6 +11,10 @@ interface WhisperXResponse {
 
 export async function POST(request: NextRequest) {
   try {
+    if (!REPLICATE_API_KEY) {
+      throw new Error('REPLICATE_API_KEY not set');
+    }
+
     const formData = await request.formData();
     const file = formData.get('file') as File;
 
@@ -24,40 +25,42 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Save file to temp directory
-    const tmpDir = os.tmpdir();
-    const tmpFile = path.join(tmpDir, `audio-${Date.now()}.wav`);
-    const buffer = await file.arrayBuffer();
-    fs.writeFileSync(tmpFile, Buffer.from(buffer));
+    // Convert file to base64
+    const arrayBuffer = await file.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString('base64');
+    const dataUrl = `data:audio/mpeg;base64,${base64}`;
 
-    // Call Replicate API
-    const response = await fetch('https://api.replicate.com/v1/predictions', {
+    // Create prediction
+    const createResponse = await fetch('https://api.replicate.com/v1/predictions', {
       method: 'POST',
       headers: {
         'Authorization': `Token ${REPLICATE_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        version: 'victor-upmeet/whisperx',
+        version: 'victor-upmeet/whisperx:1.2.1',
         input: {
-          audio: fs.readFileSync(tmpFile),
+          audio: dataUrl,
           language: 'en',
           align_output: true,
+          batch_size: 24,
         },
       }),
     });
 
-    if (!response.ok) {
-      throw new Error(`Replicate API error: ${response.statusText}`);
+    if (!createResponse.ok) {
+      const error = await createResponse.text();
+      throw new Error(`Failed to create prediction: ${error}`);
     }
 
-    const prediction = await response.json();
-    let predictionId = prediction.id;
+    const prediction = await createResponse.json();
+    const predictionId = prediction.id;
 
     // Poll for completion
-    while (prediction.status !== 'succeeded' && prediction.status !== 'failed') {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+    let attempts = 0;
+    const maxAttempts = 120; // 2 minutes max
 
+    while (attempts < maxAttempts) {
       const statusResponse = await fetch(
         `https://api.replicate.com/v1/predictions/${predictionId}`,
         {
@@ -67,7 +70,12 @@ export async function POST(request: NextRequest) {
         }
       );
 
+      if (!statusResponse.ok) {
+        throw new Error(`Failed to check status: ${statusResponse.statusText}`);
+      }
+
       const statusData = await statusResponse.json();
+
       if (statusData.status === 'succeeded') {
         // Extract words from segments
         const words: WhisperXResponse[] = [];
@@ -75,29 +83,29 @@ export async function POST(request: NextRequest) {
 
         for (const segment of segments) {
           if (segment.words) {
-            for (const word of segment.words) {
+            for (const wordObj of segment.words) {
               words.push({
-                word: word.word.trim(),
-                start: word.start,
-                end: word.end,
+                word: wordObj.word.trim(),
+                start: wordObj.start,
+                end: wordObj.end,
                 speaker: segment.speaker,
               });
             }
           }
         }
 
-        // Clean up
-        fs.unlinkSync(tmpFile);
-
         return NextResponse.json({ words });
       } else if (statusData.status === 'failed') {
-        throw new Error('WhisperX transcription failed');
+        const error = statusData.error || 'Unknown error';
+        throw new Error(`Transcription failed: ${error}`);
       }
+
+      // Still processing
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      attempts++;
     }
 
-    // Fallback (should not reach here)
-    fs.unlinkSync(tmpFile);
-    return NextResponse.json({ error: 'Transcription timeout' }, { status: 500 });
+    throw new Error('Transcription timeout after 2 minutes');
   } catch (error) {
     console.error('WhisperX error:', error);
     return NextResponse.json(

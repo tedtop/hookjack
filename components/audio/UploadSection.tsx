@@ -39,10 +39,17 @@ export function UploadSection() {
       });
 
       if (!whisperResponse.ok) {
-        throw new Error('Transcription failed');
+        const errorData = await whisperResponse.json();
+        throw new Error(
+          errorData.error || `Transcription failed (${whisperResponse.status})`
+        );
       }
 
-      const { words } = await whisperResponse.json();
+      const whisperData = await whisperResponse.json();
+      if (whisperData.error) {
+        throw new Error(`Transcription error: ${whisperData.error}`);
+      }
+      const { words } = whisperData;
       setWords(words);
 
       // Detect structure
@@ -53,10 +60,14 @@ export function UploadSection() {
       });
 
       if (structureResponse.ok) {
-        const { sections } = await structureResponse.json();
-        setSections(sections);
+        const structureData = await structureResponse.json();
+        if (!structureData.error) {
+          const { sections } = structureData;
+          setSections(sections);
+        }
       }
     } catch (err) {
+      console.error('Upload error:', err);
       setError(err instanceof Error ? err.message : 'Unknown error');
       reset();
     } finally {

@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Anthropic } from '@anthropic-ai/sdk';
 
-const client = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
 interface SongSection {
   label: string;
@@ -23,6 +20,10 @@ const COLORS = [
 
 export async function POST(request: NextRequest) {
   try {
+    if (!ANTHROPIC_API_KEY) {
+      throw new Error('ANTHROPIC_API_KEY not set');
+    }
+
     const { words } = await request.json();
 
     if (!Array.isArray(words) || words.length === 0) {
@@ -35,14 +36,21 @@ export async function POST(request: NextRequest) {
     // Build lyrics text
     const lyrics = words.map((w) => w.word).join(' ');
 
-    // Call Claude to detect song structure
-    const message = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1024,
-      messages: [
-        {
-          role: 'user',
-          content: `Analyze this song lyrics and identify the song structure sections (intro, verse, pre-chorus, chorus, bridge, outro).
+    // Call Claude API directly
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-opus-4-1-20250805',
+        max_tokens: 1024,
+        messages: [
+          {
+            role: 'user',
+            content: `Analyze this song lyrics and identify the song structure sections (intro, verse, pre-chorus, chorus, bridge, outro).
 
 Return ONLY a valid JSON array with no markdown formatting, no code blocks, no explanation. Each object must have exactly these fields:
 - "label": string (e.g. "Verse 1", "Chorus", "Bridge")
@@ -53,15 +61,20 @@ Lyrics (${words.length} words):
 ${lyrics}
 
 Return the JSON array only, nothing else.`,
-        },
-      ],
+          },
+        ],
+      }),
     });
 
-    // Parse the response
-    const responseText =
-      message.content[0].type === 'text' ? message.content[0].text : '';
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Claude API error: ${error}`);
+    }
 
-    // Extract JSON from response (remove markdown code blocks if present)
+    const data = await response.json();
+    const responseText = data.content[0]?.text || '';
+
+    // Extract JSON from response
     let jsonStr = responseText.trim();
     if (jsonStr.startsWith('```json')) {
       jsonStr = jsonStr.replace(/^```json\n/, '').replace(/\n```$/, '');
